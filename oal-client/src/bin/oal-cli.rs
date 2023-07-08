@@ -1,5 +1,5 @@
 use oal_client::cli::Processor;
-use oal_client::{config, DefaultFileSystem, FileSystem};
+use oal_client::{config, mediadoc, DefaultFileSystem, FileSystem};
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
 
     eprintln!("Generating API definition");
     let spec = proc.eval(&mods)?;
-    let mut builder = oal_openapi::Builder::new(spec);
+    let mut builder = oal_openapi::Builder::new(&spec);
 
     if let Some(ref loc) = base {
         let path: PathBuf = loc.try_into()?;
@@ -28,6 +28,13 @@ fn main() -> anyhow::Result<()> {
 
     eprintln!("Writing OpenAPI definition to {target}");
     DefaultFileSystem.write_file(&target, api_yaml)?;
+
+    if let Some(doc_out) = config.doc()? {
+        let builder = mediadoc::Builder::new(&spec);
+        let doc = builder.into_document()?;
+        eprintln!("Writing documentation to {doc_out}");
+        DefaultFileSystem.write_file(&doc_out, doc)?;
+    }
 
     Ok(())
 }

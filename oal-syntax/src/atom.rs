@@ -154,6 +154,20 @@ pub enum Method {
     Head,
 }
 
+impl Display for Method {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Method::Get => write!(f, "GET"),
+            Method::Put => write!(f, "PUT"),
+            Method::Post => write!(f, "POST"),
+            Method::Patch => write!(f, "PATCH"),
+            Method::Delete => write!(f, "DELETE"),
+            Method::Options => write!(f, "OPTIONS"),
+            Method::Head => write!(f, "HEAD"),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum VariadicOperator {
     Join,

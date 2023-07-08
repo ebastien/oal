@@ -8,22 +8,22 @@ use oal_syntax::atom;
 use openapiv3::*;
 use std::iter::once;
 
-pub struct Builder {
-    spec: spec::Spec,
+pub struct Builder<'a> {
+    spec: &'a spec::Spec,
     base: Option<OpenAPI>,
 }
 
 type Headers = IndexMap<String, ReferenceOr<Header>>;
 type Examples = IndexMap<String, ReferenceOr<Example>>;
 
-impl From<Builder> for OpenAPI {
+impl<'a> From<Builder<'a>> for OpenAPI {
     fn from(b: Builder) -> Self {
         b.into_openapi()
     }
 }
 
-impl Builder {
-    pub fn new(spec: spec::Spec) -> Builder {
+impl<'a> Builder<'a> {
+    pub fn new(spec: &'a spec::Spec) -> Builder {
         Builder { spec, base: None }
     }
 

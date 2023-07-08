@@ -1,3 +1,4 @@
+use anyhow::Ok;
 use clap::Parser as ClapParser;
 use oal_model::locator::Locator;
 use serde::Deserialize;
@@ -21,6 +22,10 @@ struct Args {
     /// The path to the configuration file
     #[clap(short = 'c', long = "conf", parse(from_os_str))]
     config: Option<PathBuf>,
+
+    /// The relative URL to the target documentation
+    #[clap(short = 'd', long = "doc")]
+    doc: Option<String>,
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -80,6 +85,13 @@ impl Config {
 
     pub fn base(&self) -> anyhow::Result<Option<Locator>> {
         match self.args.base.as_ref().or(self.file.api.base.as_ref()) {
+            Some(p) => Ok(Some(self.root.join(p)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn doc(&self) -> anyhow::Result<Option<Locator>> {
+        match self.args.doc.as_ref() {
             Some(p) => Ok(Some(self.root.join(p)?)),
             None => Ok(None),
         }

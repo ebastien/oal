@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod lsp;
+pub mod mediadoc;
 
 use oal_model::locator::Locator;
 use std::io;
