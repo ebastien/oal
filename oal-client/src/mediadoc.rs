@@ -120,36 +120,46 @@ fn test_uri_equality() {
     assert_eq!(h1, h2);
 }
 
-pub type Context = Vec<atom::Text>;
+type RelationSet = HashSet<(atom::Text, Uri, Option<atom::Method>)>;
+type UriSet = HashMap<Uri, HashSet<atom::Method>>;
 
-type RelationSet = HashSet<(Context, Uri, Option<atom::Method>)>;
-
-fn iter_relations(rels: &mut RelationSet, parent: Context, schema: &spec::Schema) {
+fn iter_relations(
+    spec: &spec::Spec,
+    rels: &mut RelationSet,
+    name: Option<atom::Text>,
+    schema: &spec::Schema,
+) {
     match &schema.expr {
         spec::SchemaExpr::Object(obj) => {
             for prop in obj.props.iter() {
-                let mut next = parent.clone();
-                next.push(prop.name.clone());
-                iter_relations(rels, next, &prop.schema)
+                iter_relations(spec, rels, Some(prop.name.clone()), &prop.schema);
             }
         }
         spec::SchemaExpr::Array(arr) => {
-            iter_relations(rels, parent, &arr.item);
+            iter_relations(spec, rels, name, &arr.item);
         }
         spec::SchemaExpr::Op(op) => {
             for operand in op.schemas.iter() {
-                iter_relations(rels, parent.clone(), operand);
+                iter_relations(spec, rels, name.clone(), operand);
             }
         }
+        spec::SchemaExpr::Ref(r) => {
+            let spec::Reference::Schema(s) = spec.refs.get(r).expect("reference should exist");
+            iter_relations(spec, rels, name, s);
+        }
         spec::SchemaExpr::Uri(uri) => {
-            let uri = Uri::from(uri.clone());
-            rels.insert((parent, uri, None));
+            if let Some(name) = name {
+                let uri = Uri::from(uri.clone());
+                rels.insert((name, uri, None));
+            }
         }
         spec::SchemaExpr::Rel(rel) => {
-            for (method, xfer) in rel.xfers.iter() {
-                if xfer.is_some() {
-                    let uri = Uri::from(rel.uri.clone());
-                    rels.insert((parent.clone(), uri, Some(method)));
+            if let Some(name) = name {
+                for (method, xfer) in rel.xfers.iter() {
+                    if xfer.is_some() {
+                        let uri = Uri::from(rel.uri.clone());
+                        rels.insert((name.clone(), uri, Some(method)));
+                    }
                 }
             }
         }
@@ -157,66 +167,60 @@ fn iter_relations(rels: &mut RelationSet, parent: Context, schema: &spec::Schema
     }
 }
 
+fn collect_relations(spec: &spec::Spec) -> RelationSet {
+    let mut rels = RelationSet::new();
+    for rel in spec.rels.iter() {
+        for (_, xfer) in rel.xfers.iter() {
+            if let Some(xfer) = xfer {
+                if let Some(domain) = xfer.domain.schema.as_ref() {
+                    iter_relations(spec, &mut rels, None, domain.as_ref());
+                }
+                for range in xfer.ranges.values() {
+                    if let Some(range) = range.schema.as_ref() {
+                        iter_relations(spec, &mut rels, None, range.as_ref());
+                    }
+                }
+            }
+        }
+    }
+    rels
+}
+
+fn collect_uris(spec: &spec::Spec) -> UriSet {
+    let mut uris = UriSet::new();
+    for rel in spec.rels.iter() {
+        for (method, xfer) in rel.xfers.iter() {
+            if xfer.is_some() {
+                match uris.entry(rel.uri.clone().into()) {
+                    hash_map::Entry::Occupied(mut e) => {
+                        e.get_mut().insert(method);
+                    }
+                    hash_map::Entry::Vacant(e) => {
+                        e.insert(HashSet::from([method]));
+                    }
+                };
+            }
+        }
+    }
+    uris
+}
+
 pub struct Builder<'a> {
     spec: &'a spec::Spec,
     rels: RelationSet,
-    // _refs: HashMap<atom::Ident, RelationSet>,
-    uris: HashMap<Uri, HashSet<atom::Method>>,
+    uris: UriSet,
 }
 
 impl<'a> Builder<'a> {
     pub fn new(spec: &'a spec::Spec) -> Self {
         Builder {
             spec,
-            rels: Default::default(),
-            uris: Default::default(),
+            rels: collect_relations(spec),
+            uris: collect_uris(spec),
         }
     }
 
-    fn collect_relations(&mut self) {
-        let mut rels = RelationSet::new();
-        for rel in self.spec.rels.iter() {
-            for (_, xfer) in rel.xfers.iter() {
-                if let Some(xfer) = xfer {
-                    if let Some(domain) = xfer.domain.schema.as_ref() {
-                        iter_relations(&mut rels, Context::default(), domain.as_ref());
-                    }
-                    for range in xfer.ranges.values() {
-                        if let Some(range) = range.schema.as_ref() {
-                            iter_relations(&mut rels, Context::default(), range.as_ref());
-                        }
-                    }
-                }
-            }
-        }
-        for (_, reference) in self.spec.refs.iter() {
-            let spec::Reference::Schema(schema) = reference;
-            iter_relations(&mut rels, Context::default(), schema);
-        }
-        self.rels = rels;
-    }
-
-    fn collect_uris(&mut self) {
-        for rel in self.spec.rels.iter() {
-            for (method, xfer) in rel.xfers.iter() {
-                if xfer.is_some() {
-                    match self.uris.entry(rel.uri.clone().into()) {
-                        hash_map::Entry::Occupied(mut e) => {
-                            e.get_mut().insert(method);
-                        }
-                        hash_map::Entry::Vacant(e) => {
-                            e.insert(HashSet::from([method]));
-                        }
-                    };
-                }
-            }
-        }
-    }
-
-    pub fn into_document(mut self) -> Result<String, Error> {
-        self.collect_uris();
-        self.collect_relations();
-
+    pub fn into_document(self) -> Result<String, Error> {
         let mut w = String::new();
         writeln!(&mut w, "# Media-type reference")?;
         writeln!(&mut w, "## Resources")?;
@@ -230,16 +234,9 @@ impl<'a> Builder<'a> {
         writeln!(&mut w, "## Relations")?;
         writeln!(&mut w, "| URI | Context | Method | Description |")?;
         writeln!(&mut w, "| --- | ------- | ------ | ----------- |")?;
-        for (ctx, uri, method) in self.rels.iter() {
-            let c = ctx.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        for (rel, uri, method) in self.rels.iter() {
             let m = method.map_or("".to_owned(), |m| format!("{}", m));
-            writeln!(
-                &mut w,
-                "| {} | {} | {} |  |",
-                uri.inner().pattern(),
-                c.join("."),
-                m
-            )?;
+            writeln!(&mut w, "| {} | {} | {} |  |", uri.inner().pattern(), rel, m)?;
         }
         Ok(w)
     }
